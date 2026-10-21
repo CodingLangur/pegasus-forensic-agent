@@ -168,5 +168,85 @@ class TestRawByteFallbackScanner(unittest.TestCase):
         self.assertEqual(offset, content.find(b"cloud-services-sync.net"))
 
 
+class TestRealisticBackupFixtures(unittest.TestCase):
+    """Integration tests validating genuine SQLite 3 and binary plist files in test_fixtures."""
+
+    def setUp(self):
+        self.workspace_root = Path(__file__).resolve().parent.parent
+        self.clean_sms_db = self.workspace_root / "test_fixtures" / "clean_backup" / "Library" / "SMS" / "sms.db"
+        self.infected_net_db = (
+            self.workspace_root
+            / "test_fixtures"
+            / "infected_backup"
+            / "Library"
+            / "Caches"
+            / "com.apple.WebKit.Networking"
+            / "network_cache.db"
+        )
+        self.clean_safari_plist = (
+            self.workspace_root
+            / "test_fixtures"
+            / "clean_backup"
+            / "Library"
+            / "Preferences"
+            / "com.apple.mobilesafari.plist"
+        )
+        self.infected_stage2_plist = (
+            self.workspace_root
+            / "test_fixtures"
+            / "infected_backup"
+            / "Library"
+            / "Preferences"
+            / "com.nso.stage2.plist"
+        )
+
+    def test_fixtures_clean_sms_db_is_valid_sqlite(self):
+        self.assertTrue(self.clean_sms_db.is_file())
+        self.assertTrue(is_sqlite_database(self.clean_sms_db))
+
+        # Inspect with threat domains
+        matches = inspect_sqlite_database(self.clean_sms_db, {"cloud-services-sync.net"})
+        self.assertEqual(matches, [])
+
+        # Verify tables
+        conn = sqlite3.connect(f"file:{self.clean_sms_db.as_posix()}?mode=ro", uri=True)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tables = {row[0] for row in cursor.fetchall()}
+        conn.close()
+        self.assertIn("message", tables)
+        self.assertIn("chat", tables)
+
+    def test_fixtures_infected_network_cache_db_is_valid_sqlite(self):
+        self.assertTrue(self.infected_net_db.is_file())
+        self.assertTrue(is_sqlite_database(self.infected_net_db))
+
+        matches = inspect_sqlite_database(self.infected_net_db, {"cloud-services-sync.net"})
+        self.assertEqual(len(matches), 1)
+        m = matches[0]
+        self.assertEqual(m.table_name, "cfurl_cache_response")
+        self.assertEqual(m.column_name, "request_key")
+        self.assertEqual(m.row_id, 1)
+        self.assertEqual(m.matched_value, "cloud-services-sync.net")
+
+    def test_fixtures_binary_plists_parse_cleanly(self):
+        # Verify both start with Apple binary plist magic header 'bplist00'
+        self.assertTrue(self.clean_safari_plist.read_bytes().startswith(b"bplist00"))
+        self.assertTrue(self.infected_stage2_plist.read_bytes().startswith(b"bplist00"))
+
+        # Test clean plist parsing
+        clean_matches = inspect_plist_file(self.clean_safari_plist, {"cloud-services-sync.net"})
+        self.assertEqual(clean_matches, [])
+
+        # Test infected stage2 plist parsing
+        infected_matches = inspect_plist_file(
+            self.infected_stage2_plist,
+            suspicious_domains=set(),
+            suspicious_filenames={"com.apple.coretelephony.ext"},
+        )
+        self.assertGreater(len(infected_matches), 0)
+        self.assertEqual(infected_matches[0].matched_value, "com.apple.coretelephony.ext")
+
+
 if __name__ == "__main__":
     unittest.main()

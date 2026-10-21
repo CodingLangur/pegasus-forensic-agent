@@ -69,6 +69,7 @@ Because zero-click mobile compromises bypass transit encryption (E2EE) directly 
 │   ├── matcher.py             # Multi-vector IoC matching & triage engine
 │   ├── parsers.py             # SQLite and Property List (.plist) deep forensic parsers
 │   ├── sealer.py              # AES-256-GCM evidence packaging & key wrapping
+│   ├── create_fixtures.py     # Deterministic synthetic iOS backup fixture generator
 │   ├── crypto/
 │   │   ├── __init__.py
 │   │   ├── signatures.py      # Ed25519 & RSA-PSS digital signature verification
@@ -81,15 +82,16 @@ Because zero-click mobile compromises bypass transit encryption (E2EE) directly 
 │       ├── vendor_public.pem  # Vendor public key for feed verification
 │       └── vendor_private.pem # Vendor private key for feed signing
 ├── test_fixtures/
-│   ├── clean_backup/          # Mock benign device backup
-│   └── infected_backup/       # Mock backup containing Pegasus IoC vectors
+│   ├── clean_backup/          # Genuine SQLite & binary plist benign backup
+│   └── infected_backup/       # Backup with Pegasus IoCs (Mach-O stubs, C2 SQLite cache, bplist00)
 ├── tests/
 │   ├── __init__.py
 │   ├── test_feed_verification.py
 │   ├── test_scanner.py
 │   ├── test_matcher.py
 │   ├── test_parsers.py
-│   └── test_sealer.py
+│   ├── test_sealer.py
+│   └── test_agent.py
 └── output/                    # Sealed evidence reports & ephemeral/wrapped keys
     └── .gitkeep
 ```
@@ -158,9 +160,26 @@ python -m pmfa.sealer --tamper-check
 
 ---
 
+## Test Fixture Generation
+
+PMFA includes a deterministic synthetic backup fixture generator that constructs realistic mock iOS device backups conforming to iOS file layout standards:
+- **Clean Backup** (`test_fixtures/clean_backup`): Valid `bplist00` binary plists (`com.apple.mobilesafari.plist`), XML plists, and a valid SQLite 3 database (`Library/SMS/sms.db`).
+- **Infected Backup** (`test_fixtures/infected_backup`): Valid binary plist (`com.nso.stage2.plist`), zero-byte trigger (`zero_trigger.bin`), Mach-O header stubs (`com.apple.coretelephony.ext`, `libagent_payload.dylib`), XML persistence plists, and a genuine WebKit SQLite networking cache (`Library/Caches/com.apple.WebKit.Networking/network_cache.db`) housing Pegasus C2 URLs.
+
+To regenerate fixtures at any time:
+```bash
+# Using the installed CLI entry point
+pmfa-fixtures
+
+# Or directly via Python module
+python -m pmfa.create_fixtures
+```
+
+---
+
 ## Running the Automated Test Suite
 
-PMFA includes 68 comprehensive unit and integration tests covering all modules:
+PMFA includes 76 comprehensive unit and integration tests covering all cryptographic modules, parsers, scanners, matcher vectors, sealer modes, and agent state machine transitions:
 
 ```bash
 python -m unittest discover -s tests -p "test_*.py" -v

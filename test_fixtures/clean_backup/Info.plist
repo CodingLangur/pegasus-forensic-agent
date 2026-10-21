@@ -1,1 +1,18 @@
-<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>DeviceName</key><string>iPhone 14 Pro</string></dict></plist>
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>DeviceName</key>
+	<string>iPhone (Research Baseline)</string>
+	<key>ProductType</key>
+	<string>iPhone14,2</string>
+	<key>ProductVersion</key>
+	<string>16.5</string>
+	<key>SerialNumber</key>
+	<string>F2LW80XXXXXX</string>
+	<key>TargetType</key>
+	<string>Device</string>
+	<key>UniqueDeviceID</key>
+	<string>00008101-00123456789ABCDE</string>
+</dict>
+</plist>

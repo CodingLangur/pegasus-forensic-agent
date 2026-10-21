@@ -48,6 +48,7 @@ pmfa-verify = "pmfa.feed_verifier:main"
 pmfa-scan = "pmfa.scanner:main"
 pmfa-match = "pmfa.matcher:main"
 pmfa-seal = "pmfa.sealer:main"
+pmfa-fixtures = "pmfa.create_fixtures:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
