@@ -61,6 +61,10 @@ Because zero-click mobile compromises bypass transit encryption (E2EE) directly 
 .
 ├── LICENSE
 ├── README.md
+├── DEMO_GUIDE.md              # 2-3 minute presentation speaker script & benchmark reference
+├── run_demo.sh                # Executable demo launcher for seminar presentations
+├── pyproject.toml             # PEP 517 build configuration & CLI console entry points
+├── requirements.txt           # Package requirements
 ├── pmfa/
 │   ├── __init__.py
 │   ├── agent.py               # Main CLI orchestrator & agent state machine
@@ -70,6 +74,7 @@ Because zero-click mobile compromises bypass transit encryption (E2EE) directly 
 │   ├── parsers.py             # SQLite and Property List (.plist) deep forensic parsers
 │   ├── sealer.py              # AES-256-GCM evidence packaging & key wrapping
 │   ├── create_fixtures.py     # Deterministic synthetic iOS backup fixture generator
+│   ├── demo.py                # Seminar presentation demo orchestrator (Design Doc §7)
 │   ├── crypto/
 │   │   ├── __init__.py
 │   │   ├── signatures.py      # Ed25519 & RSA-PSS digital signature verification
@@ -91,7 +96,8 @@ Because zero-click mobile compromises bypass transit encryption (E2EE) directly 
 │   ├── test_matcher.py
 │   ├── test_parsers.py
 │   ├── test_sealer.py
-│   └── test_agent.py
+│   ├── test_agent.py
+│   └── test_demo_workflow.py
 └── output/                    # Sealed evidence reports & ephemeral/wrapped keys
     └── .gitkeep
 ```
@@ -177,9 +183,35 @@ python -m pmfa.create_fixtures
 
 ---
 
+## Seminar Presentation Demo (Design Doc §7)
+
+PMFA includes an interactive course presentation demo runner that implements the complete 2-3 minute presentation workflow from Design Doc Section 7:
+1. **Threat Feed Tamper Check**: Validates Ed25519 signature and tests 1-byte adversary feed poisoning (immediate exit code `2: E_INTEGRITY_FAIL` abort).
+2. **Clean Baseline Scan**: Scans mock iOS backup proving 100% clean baseline and 0 false positives.
+3. **Infected Artifact Detection**: Demonstrates multi-vector Pegasus detection (SHA-256 match, malicious extension Mach-O stubs, `/private/var/tmp/` persistence, and WebKit SQLite cache C2 domain extraction).
+4. **Sealed Evidence Inspection**: Inspects raw AES-256-GCM binary ciphertext and demonstrates authenticated decryption with ephemeral key unwrapping.
+5. **Cryptographic Tamper Rejection**: Flips 1 bit in ciphertext proving AEAD authentication tag verification failure.
+6. **Live Performance Benchmarks**: Measures Ed25519 verification, SHA-256 throughput (>200 MB/s), and AES-GCM speeds.
+
+See [DEMO_GUIDE.md](file:///home/trinath/Desktop/temp/transfertousb/CNS_Case_Study/DEMO_GUIDE.md) for the complete slide-by-slide speaker script.
+
+To launch the demo:
+```bash
+# Interactive mode (press Enter to advance through presentation phases)
+./run_demo.sh
+
+# Or via installed console script
+pmfa-demo
+
+# Automated non-interactive mode
+./run_demo.sh --auto --delay 1.0
+```
+
+---
+
 ## Running the Automated Test Suite
 
-PMFA includes 76 comprehensive unit and integration tests covering all cryptographic modules, parsers, scanners, matcher vectors, sealer modes, and agent state machine transitions:
+PMFA includes 84 comprehensive unit and integration tests covering all cryptographic modules, parsers, scanners, matcher vectors, sealer modes, state machine transitions, and demo workflows:
 
 ```bash
 python -m unittest discover -s tests -p "test_*.py" -v

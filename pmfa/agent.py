@@ -65,6 +65,7 @@ class PegasusForensicAgent:
         self.alert_json_path = Path(alert_json_path) if alert_json_path else None
         self.state = AgentState.INITIALIZING
         self.state_history: List[AgentState] = [self.state]
+        self.last_report: Optional[TriageReport] = None
 
     def transition(self, next_state: AgentState) -> None:
         """Executes state transition in agent lifecycle and records state history."""
@@ -99,6 +100,7 @@ class PegasusForensicAgent:
         self.transition(AgentState.ANALYZING)
         matcher = IoCMatcher(feed)
         report = matcher.correlate_scan(scan_result)
+        self.last_report = report
 
         # 4. State Anomaly Branching: If anomalies detected, enter ALERT_GEN state before SEALING
         if report.threat_detected:
