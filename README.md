@@ -25,8 +25,8 @@ Because zero-click mobile compromises bypass transit encryption (E2EE) directly 
 
 ## Core Architectural Components
 
-### 1. Threat Feed Ingestion & Cryptographic Verification (`pmfa/feed_verifier.py`)
-* **Primitive**: **Ed25519** digital signatures (RFC 8032).
+### 1. Threat Feed Ingestion & Cryptographic Verification (`pmfa/feed_verifier.py`, `pmfa/crypto/signatures.py`)
+* **Primitives**: **Ed25519** (RFC 8032) and **RSA-PSS** (2048/4096-bit with SHA-256 and PSS padding).
 * **Function**: Ingests threat intelligence indicators (`iocs.json`) alongside detached signatures (`iocs.json.sig`), validating them against the trusted vendor public key (`vendor_public.pem`).
 * **Security Control**: Aborts execution immediately (`exit code 2: E_INTEGRITY_FAIL`) if adversary poisoning or signature tampering is detected.
 
@@ -36,18 +36,22 @@ Because zero-click mobile compromises bypass transit encryption (E2EE) directly 
 * **Metadata Extraction**: Captures POSIX timestamps (`mtime`, `ctime`), permissions (octal and symbolic), file sizes, and structural file classifications.
 * **Performance**: Features a multi-threaded `ThreadPoolExecutor` worker pool for high-throughput block hashing.
 
-### 3. Agent Logic & IoC Matching Engine (`pmfa/matcher.py`)
+### 3. Agent Logic & IoC Matching Engine (`pmfa/matcher.py`, `pmfa/parsers.py`)
 * **Function**: Correlates discovered artifacts against verified IoC definitions using three distinct match vectors:
   1. **Cryptographic Hashes**: Exact SHA-256 match against known malicious loader/payload binaries.
-  2. **Anomalous Process & Path Names**: Exact/regex detection of malicious binaries (`com.apple.coretelephony.ext`, `libagent_payload.dylib`) and anomalous injection paths (`/private/var/tmp/`, `/Library/Preferences/com.nso.*`).
-  3. **Network / Domain Indicators**: Deep byte search in SQLite network caches and preferences for C2 domains (e.g. `cloud-services-sync.net`), recording exact byte offsets.
+  2. **Anomalous Process & Path Names**: Exact and regex evaluation of malicious binaries (`com.apple.coretelephony.ext`, `libagent_payload.dylib`) and injection paths (`/private/var/tmp/`, `/Library/Preferences/com.nso.*`).
+  3. **Deep Network / Domain Artifact Parsing**: Structured read-only SQLite inspection (`cfurl_cache_response`, database tables) and recursive Property List (`.plist`) traversal to discover C2 domains (e.g. `cloud-services-sync.net`), with byte offset fallback.
 * **Triage Scoring**: Marks findings with severity levels (`CRITICAL`, `HIGH`), extracts remediation advice, and compiles pre-encryption JSON triage reports.
 
 ### 4. Evidence Packaging & Cryptographic Sealing (`pmfa/sealer.py`, `pmfa/crypto/cipher.py`)
 * **Primitive**: **AES-256-GCM** (Galois/Counter Mode).
 * **Parameters**: 256-bit symmetric key, 96-bit unique CSPRNG initialization vector ($IV$), and 128-bit authentication tag ($T$).
 * **Format**: $IV \parallel \text{Ciphertext} \parallel T$.
-* **Function**: Seals the forensic triage report to guarantee strict chain of custody, non-repudiation, and data confidentiality (`output/report.enc` and `output/report.key`).
+* **Key Wrapping (Key Encapsulation)**:
+  * **RSA-OAEP (SHA-256)**: Encrypts the ephemeral AES key directly under an investigator's RSA public key.
+  * **Passphrase KDF**: Derives a 256-bit Key Encryption Key (KEK) using PBKDF2-HMAC-SHA256 (100,000 rounds).
+  * **Plaintext Ephemeral Key**: Fallback option for demo and pipeline automation (`output/report.key`).
+* **Function**: Seals the forensic triage report to guarantee strict chain of custody, non-repudiation, and data confidentiality (`output/report.enc`).
 
 ---
 
@@ -60,17 +64,18 @@ Because zero-click mobile compromises bypass transit encryption (E2EE) directly 
 ├── pmfa/
 │   ├── __init__.py
 │   ├── agent.py               # Main CLI orchestrator & agent state machine
-│   ├── feed_verifier.py       # Threat feed ingestion & Ed25519 verification
+│   ├── feed_verifier.py       # Threat feed ingestion & Ed25519 / RSA-PSS verification
 │   ├── scanner.py             # Multi-threaded forensic inspection engine
 │   ├── matcher.py             # Multi-vector IoC matching & triage engine
-│   ├── sealer.py              # AES-256-GCM evidence packaging & sealing
+│   ├── parsers.py             # SQLite and Property List (.plist) deep forensic parsers
+│   ├── sealer.py              # AES-256-GCM evidence packaging & key wrapping
 │   ├── crypto/
 │   │   ├── __init__.py
-│   │   ├── signatures.py      # Ed25519 signature generation & verification
+│   │   ├── signatures.py      # Ed25519 & RSA-PSS digital signature verification
 │   │   ├── hashing.py         # Streaming SHA-256 file hashing
-│   │   └── cipher.py          # AES-256-GCM authenticated encryption routines
+│   │   └── cipher.py          # AES-256-GCM AEAD & RSA-OAEP / Passphrase key wrapping
 │   ├── feeds/
-│   │   ├── iocs.json          # Threat intelligence indicators
+│   │   ├── iocs.json          # Threat intelligence indicators (exact & regex patterns)
 │   │   └── iocs.json.sig      # Detached digital signature
 │   └── keys/
 │       ├── vendor_public.pem  # Vendor public key for feed verification
@@ -83,8 +88,9 @@ Because zero-click mobile compromises bypass transit encryption (E2EE) directly 
 │   ├── test_feed_verification.py
 │   ├── test_scanner.py
 │   ├── test_matcher.py
+│   ├── test_parsers.py
 │   └── test_sealer.py
-└── output/                    # Sealed evidence reports & ephemeral keys
+└── output/                    # Sealed evidence reports & ephemeral/wrapped keys
     └── .gitkeep
 ```
 
@@ -131,16 +137,22 @@ python -m pmfa.feed_verifier --tamper
 
 ---
 
-### 3. Evidence Inspection & Decryption
+### 3. Evidence Inspection & Key Unwrapping
 
 ```bash
 # View non-printable binary ciphertext (first 64 bytes)
 hexdump -C -n 64 output/report.enc
 
-# Authenticate AEAD tag and decrypt evidence findings
-python -m pmfa.sealer --decrypt-report output/report.enc --key output/report.key
+# Mode A: Standard ephemeral key decryption
+python -m pmfa.agent --decrypt-report output/report.enc --key output/report.key
 
-# Verify evidence tamper detection (rejection on corrupted ciphertext)
+# Mode B: Asymmetric unwrap with analyst RSA private key
+python -m pmfa.agent --decrypt-report output/report.enc --key output/report.key --analyst-privkey analyst_private.pem
+
+# Mode C: Passphrase KEK unwrap
+python -m pmfa.agent --decrypt-report output/report.enc --key output/report.key --passphrase "MyPassphrase"
+
+# Verify evidence tamper detection (AEAD tag rejection on corrupted ciphertext)
 python -m pmfa.sealer --tamper-check
 ```
 
@@ -148,7 +160,7 @@ python -m pmfa.sealer --tamper-check
 
 ## Running the Automated Test Suite
 
-PMFA includes 45 comprehensive unit and integration tests covering all four core components:
+PMFA includes 68 comprehensive unit and integration tests covering all modules:
 
 ```bash
 python -m unittest discover -s tests -p "test_*.py" -v

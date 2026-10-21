@@ -45,6 +45,8 @@ class PegasusForensicAgent:
         output_enc_path: str = "output/report.enc",
         output_key_path: str = "output/report.key",
         workers: int = 4,
+        analyst_pubkey_path: Optional[str] = None,
+        passphrase: Optional[str] = None,
     ):
         self.target_path = Path(target_path)
         self.feed_path = Path(feed_path)
@@ -53,6 +55,8 @@ class PegasusForensicAgent:
         self.output_enc_path = Path(output_enc_path)
         self.output_key_path = Path(output_key_path)
         self.workers = workers
+        self.analyst_pubkey_path = Path(analyst_pubkey_path) if analyst_pubkey_path else None
+        self.passphrase = passphrase
         self.state = AgentState.INITIALIZING
 
     def transition(self, next_state: AgentState) -> None:
@@ -94,6 +98,8 @@ class PegasusForensicAgent:
                 report_data=report,
                 output_enc_path=self.output_enc_path,
                 output_key_path=self.output_key_path,
+                analyst_pubkey=self.analyst_pubkey_path,
+                passphrase=self.passphrase,
             )
         except Exception as exc:
             sys.stderr.write(f"[-] Cryptographic sealing failed: {exc}\n")
@@ -106,7 +112,10 @@ class PegasusForensicAgent:
         # Output execution metrics and summary
         display_terminal_summary(report)
         print(f"[+] Encrypted Evidence Sealed : {pkg.encrypted_report_path}")
-        print(f"[+] Chain of Custody Key      : {pkg.key_path}")
+        if pkg.is_wrapped:
+            print(f"[+] Chain of Custody Key ({pkg.wrapping_type}) : {pkg.key_path}")
+        else:
+            print(f"[+] Chain of Custody Key      : {pkg.key_path}")
 
         return 0
 
@@ -162,6 +171,20 @@ def main() -> int:
         default="output/report.key",
         help="Key to use with --decrypt-report (default: output/report.key)",
     )
+    parser.add_argument(
+        "--analyst-pubkey",
+        metavar="PUBKEY_FILE",
+        help="Path to analyst RSA public key PEM to wrap evidence key",
+    )
+    parser.add_argument(
+        "--analyst-privkey",
+        metavar="PRIVKEY_FILE",
+        help="Path to analyst RSA private key PEM to unwrap evidence key",
+    )
+    parser.add_argument(
+        "--passphrase",
+        help="Passphrase to derive KEK and wrap or unwrap evidence key",
+    )
 
     args = parser.parse_args()
 
@@ -170,7 +193,12 @@ def main() -> int:
         from pmfa.sealer import unseal_report
         import json
         try:
-            report_dict = unseal_report(args.decrypt_report, args.key)
+            report_dict = unseal_report(
+                args.decrypt_report,
+                args.key,
+                analyst_privkey=args.analyst_privkey,
+                passphrase=args.passphrase,
+            )
             print(json.dumps(report_dict, indent=2))
             return 0
         except Exception as exc:
@@ -189,6 +217,8 @@ def main() -> int:
         output_enc_path=args.output_enc,
         output_key_path=args.output_key,
         workers=args.workers,
+        analyst_pubkey_path=args.analyst_pubkey,
+        passphrase=args.passphrase,
     )
     return agent.run()
 

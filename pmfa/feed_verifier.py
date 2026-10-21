@@ -14,6 +14,7 @@ import sys
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from pmfa.crypto.signatures import (
+    get_key_algorithm_name,
     load_private_key,
     load_public_key,
     sign_feed_data,
@@ -205,7 +206,8 @@ def verify_and_load_feed(
     signature_data = sig_file.read_bytes()
     public_key = load_public_key(pub_file)
 
-    # Perform Ed25519 signature verification
+    algo_name = get_key_algorithm_name(public_key)
+    # Perform Ed25519 or RSA-PSS signature verification
     is_valid = verify_feed_signature(public_key, feed_data, signature_data)
     if not is_valid:
         logger.error("[-] Cryptographic Verification Failed: Feed signature invalid.")
@@ -213,7 +215,7 @@ def verify_and_load_feed(
             "Cryptographic Verification Failed: Feed signature invalid or feed altered."
         )
 
-    logger.info("[+] Threat feed verified via Ed25519.")
+    logger.info(f"[+] Threat feed verified via {algo_name}.")
 
     try:
         payload = json.loads(feed_data.decode("utf-8"))

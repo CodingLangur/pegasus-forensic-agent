@@ -13,12 +13,19 @@ import unittest
 from pmfa.crypto.cipher import (
     AES_KEY_SIZE_BYTES,
     EvidenceTamperingError,
+    KeyWrappingError,
     decrypt_report,
     encrypt_report,
     generate_aes_key,
+    generate_analyst_keypair,
     load_key,
     save_key,
+    unwrap_key_passphrase,
+    unwrap_key_rsa,
+    wrap_key_passphrase,
+    wrap_key_rsa,
 )
+from pmfa.crypto.signatures import serialize_private_key, serialize_public_key
 from pmfa.matcher import Finding, TriageReport
 from pmfa.sealer import seal_report, unseal_report
 
@@ -164,6 +171,83 @@ class TestEvidenceSealing(unittest.TestCase):
                 unseal_report(enc_path, key_path)
 
 
+class TestKeyWrapping(unittest.TestCase):
+    """Tests key wrapping mechanisms (RSA-OAEP and Passphrase PBKDF2)."""
+
+    def setUp(self):
+        self.analyst_priv, self.analyst_pub = generate_analyst_keypair(key_size=2048)
+        self.aes_key = generate_aes_key()
+
+    def test_rsa_oaep_wrap_unwrap_roundtrip(self):
+        wrapped = wrap_key_rsa(self.aes_key, self.analyst_pub)
+        unwrapped = unwrap_key_rsa(wrapped, self.analyst_priv)
+        self.assertEqual(unwrapped, self.aes_key)
+
+    def test_rsa_oaep_wrong_privkey_fails(self):
+        another_priv, _ = generate_analyst_keypair(key_size=2048)
+        wrapped = wrap_key_rsa(self.aes_key, self.analyst_pub)
+        with self.assertRaises(KeyWrappingError):
+            unwrap_key_rsa(wrapped, another_priv)
+
+    def test_passphrase_wrap_unwrap_roundtrip(self):
+        passphrase = "ForensicInvestigator2026!"
+        wrapped = wrap_key_passphrase(self.aes_key, passphrase)
+        unwrapped = unwrap_key_passphrase(wrapped, passphrase)
+        self.assertEqual(unwrapped, self.aes_key)
+
+    def test_passphrase_wrong_passphrase_fails(self):
+        wrapped = wrap_key_passphrase(self.aes_key, "CorrectPassword123")
+        with self.assertRaises(KeyWrappingError):
+            unwrap_key_passphrase(wrapped, "WrongPassword456")
+
+    def test_seal_and_unseal_with_analyst_rsa_key(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            enc_path = Path(tmp_dir) / "report.enc"
+            key_path = Path(tmp_dir) / "report.key"
+            sample_report = {"scan_id": "test-rsa-wrap", "threat_detected": True}
+
+            pkg = seal_report(
+                report_data=sample_report,
+                output_enc_path=enc_path,
+                output_key_path=key_path,
+                analyst_pubkey=self.analyst_pub,
+            )
+            self.assertTrue(pkg.is_wrapped)
+            self.assertEqual(pkg.wrapping_type, "RSA-OAEP")
+            self.assertIsNone(pkg.key_hex)
+
+            # Unsealing without private key must fail
+            with self.assertRaises(KeyWrappingError):
+                unseal_report(enc_path, key_path)
+
+            # Unsealing with analyst private key succeeds
+            unsealed = unseal_report(enc_path, key_path, analyst_privkey=self.analyst_priv)
+            self.assertEqual(unsealed["scan_id"], "test-rsa-wrap")
+
+    def test_seal_and_unseal_with_passphrase(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            enc_path = Path(tmp_dir) / "report.enc"
+            key_path = Path(tmp_dir) / "report.key"
+            sample_report = {"scan_id": "test-pass-wrap", "threat_detected": False}
+
+            pkg = seal_report(
+                report_data=sample_report,
+                output_enc_path=enc_path,
+                output_key_path=key_path,
+                passphrase="StrongSecretPassphrase",
+            )
+            self.assertTrue(pkg.is_wrapped)
+            self.assertEqual(pkg.wrapping_type, "PASSPHRASE")
+
+            # Unsealing with wrong passphrase fails
+            with self.assertRaises(KeyWrappingError):
+                unseal_report(enc_path, key_path, passphrase="WrongSecretPassphrase")
+
+            # Unsealing with correct passphrase succeeds
+            unsealed = unseal_report(enc_path, key_path, passphrase="StrongSecretPassphrase")
+            self.assertEqual(unsealed["scan_id"], "test-pass-wrap")
+
+
 class TestSealerCLI(unittest.TestCase):
     """Tests CLI entrypoints for report decryption and tamper check."""
 
@@ -214,6 +298,53 @@ class TestSealerCLI(unittest.TestCase):
         self.assertEqual(proc.returncode, 0)
         self.assertIn("AEAD authentication tag mismatch", proc.stderr)
         self.assertIn("Non-repudiation maintained: Tampered evidence rejected successfully.", proc.stderr)
+
+    def test_cli_seal_and_decrypt_with_analyst_key(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+            pub_path = tmp / "analyst_pub.pem"
+            priv_path = tmp / "analyst_priv.pem"
+            enc_path = tmp / "report.enc"
+            key_path = tmp / "report.key"
+
+            priv, pub = generate_analyst_keypair(2048)
+            pub_path.write_bytes(serialize_public_key(pub))
+            priv_path.write_bytes(serialize_private_key(priv))
+
+            # Seal with analyst pubkey
+            seal_cmd = [
+                sys.executable,
+                "-m",
+                "pmfa.sealer",
+                "--seal",
+                "--target",
+                "test_fixtures/clean_backup",
+                "--output-enc",
+                str(enc_path),
+                "--output-key",
+                str(key_path),
+                "--analyst-pubkey",
+                str(pub_path),
+            ]
+            proc = subprocess.run(seal_cmd, cwd=str(self.workspace_root), capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0)
+            self.assertIn("Wrapped Key (RSA-OAEP)", proc.stdout)
+
+            # Decrypt with analyst privkey
+            decrypt_cmd = [
+                sys.executable,
+                "-m",
+                "pmfa.sealer",
+                "--decrypt-report",
+                str(enc_path),
+                "--key",
+                str(key_path),
+                "--analyst-privkey",
+                str(priv_path),
+            ]
+            proc2 = subprocess.run(decrypt_cmd, cwd=str(self.workspace_root), capture_output=True, text=True)
+            self.assertEqual(proc2.returncode, 0)
+            self.assertIn("AUTHENTICATED FORENSIC REPORT (DECRYPTED EVIDENCE)", proc2.stdout)
 
 
 if __name__ == "__main__":

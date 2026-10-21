@@ -69,6 +69,46 @@ class TestEd25519Signatures(unittest.TestCase):
         self.assertTrue(verify_feed_signature(reloaded_pub, self.sample_data, new_sig))
 
 
+class TestRSAPSSSignatures(unittest.TestCase):
+    """Tests RSA-PSS digital signature generation and verification (Design Doc Section 2.1 & 3)."""
+
+    def setUp(self):
+        self.rsa_priv, self.rsa_pub = generate_keypair(algorithm="rsa", rsa_bits=2048)
+        self.sample_data = b'{"version": "1.0.0", "threat_actor": "NSO Group"}'
+        self.valid_sig = sign_feed_data(self.rsa_priv, self.sample_data)
+
+    def test_rsa_pss_valid_signature_verification(self):
+        result = verify_feed_signature(self.rsa_pub, self.sample_data, self.valid_sig)
+        self.assertTrue(result)
+
+    def test_rsa_pss_tampered_data_fails(self):
+        tampered = bytearray(self.sample_data)
+        tampered[5] ^= 0xFF
+        result = verify_feed_signature(self.rsa_pub, bytes(tampered), self.valid_sig)
+        self.assertFalse(result)
+
+    def test_rsa_pss_corrupted_signature_fails(self):
+        corrupted = bytearray(self.valid_sig)
+        corrupted[10] ^= 0xFF
+        result = verify_feed_signature(self.rsa_pub, self.sample_data, bytes(corrupted))
+        self.assertFalse(result)
+
+    def test_rsa_pss_wrong_key_fails(self):
+        _, another_pub = generate_keypair(algorithm="rsa", rsa_bits=2048)
+        result = verify_feed_signature(another_pub, self.sample_data, self.valid_sig)
+        self.assertFalse(result)
+
+    def test_rsa_pss_pem_serialization_roundtrip(self):
+        priv_pem = serialize_private_key(self.rsa_priv)
+        pub_pem = serialize_public_key(self.rsa_pub)
+
+        reloaded_priv = load_private_key(priv_pem)
+        reloaded_pub = load_public_key(pub_pem)
+
+        new_sig = sign_feed_data(reloaded_priv, self.sample_data)
+        self.assertTrue(verify_feed_signature(reloaded_pub, self.sample_data, new_sig))
+
+
 class TestThreatFeedIngestion(unittest.TestCase):
     """Tests Threat Feed loading, integrity verification, and schema validation."""
 
