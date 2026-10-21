@@ -1,0 +1,21 @@
+{
+  "version": "1.0.0",
+  "threat_actor": "NSO Group / Pegasus",
+  "last_updated": "2026-10-19T00:00:00Z",
+  "hashes_sha256": [
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e"
+  ],
+  "suspicious_paths": [
+    "/private/var/tmp/com.apple.crashreporter.plist",
+    "/Library/Preferences/com.nso.stage2.plist"
+  ],
+  "suspicious_filenames": [
+    "com.apple.coretelephony.ext",
+    "libagent_payload.dylib"
+  ],
+  "suspicious_domains": [
+    "cloud-services-sync.net",
+    "apple-telemetry-server.com"
+  ]
+}

@@ -1,0 +1,24 @@
+# Case Study Source Documents (User requested to exclude)
+Design_Doc.md
+*.pptx
+*.docx
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Caches and test environments
+.pytest_cache/
+.coverage
+htmlcov/
+.env
+.venv
+env/
+venv/
+
+# Ephemeral output artifacts (evidence and keys)
+output/*.enc
+output/*.key
+!output/.gitkeep
