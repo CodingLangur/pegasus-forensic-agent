@@ -106,11 +106,29 @@ Because zero-click mobile compromises bypass transit encryption (E2EE) directly 
 
 ## Installation & Prerequisites
 
-Requires Python 3.9+ and the `cryptography` library:
+Requires **Python 3.9+** and the `cryptography` library (`>=41.0.0`):
 
 ```bash
-pip install cryptography
+# Option A: Install directly in editable mode (recommended — installs all CLI commands)
+pip install -e .
+
+# Option B: Install dependencies via requirements.txt
+pip install -r requirements.txt
 ```
+
+### Installed Console Executables
+
+When installed via `pip install -e .`, PMFA exposes the following CLI tools directly in your PATH:
+
+| Command | Module Target | Purpose |
+| :--- | :--- | :--- |
+| `pmfa` | `pmfa.agent:main` | Complete autonomous scanner, state machine, and evidence sealer |
+| `pmfa-demo` | `pmfa.demo:main` | Interactive / automated course presentation demo runner |
+| `pmfa-fixtures` | `pmfa.create_fixtures:main` | Deterministic synthetic iOS backup generator |
+| `pmfa-verify` | `pmfa.feed_verifier:main` | Threat feed ingestion & Ed25519 / RSA-PSS verification CLI |
+| `pmfa-scan` | `pmfa.scanner:main` | Multi-threaded streaming SHA-256 backup traversal engine |
+| `pmfa-match` | `pmfa.matcher:main` | Multi-vector IoC correlation and triage reporting CLI |
+| `pmfa-seal` | `pmfa.sealer:main` | AES-256-GCM evidence packaging and key wrapping CLI |
 
 ---
 
@@ -120,12 +138,20 @@ pip install cryptography
 
 **Clean Device Baseline Scan:**
 ```bash
+# Using installed CLI command
+pmfa --target test_fixtures/clean_backup
+
+# Or via Python module
 python -m pmfa.agent --target test_fixtures/clean_backup
 ```
 *Output: Green terminal summary showing 100% Clean | 0 IoC Matches, and report sealed to `output/report.enc`.*
 
 **Infected Device Scan:**
 ```bash
+# Using installed CLI command
+pmfa --target test_fixtures/infected_backup
+
+# Or via Python module
 python -m pmfa.agent --target test_fixtures/infected_backup
 ```
 *Output: Highlights detected IoCs across SHA-256 hash, suspicious path, filename, and domain vectors, and seals evidence to `output/report.enc`.*
@@ -136,10 +162,10 @@ python -m pmfa.agent --target test_fixtures/infected_backup
 
 ```bash
 # Verify feed against vendor public key
-python -m pmfa.feed_verifier
+pmfa-verify
 
 # Simulate adversary tampering (alters 1 byte of the feed)
-python -m pmfa.feed_verifier --tamper
+pmfa-verify --tamper
 # Exits with status code 2 (E_INTEGRITY_FAIL)
 ```
 

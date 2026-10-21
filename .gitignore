@@ -1,4 +1,4 @@
-# Case Study Source Documents (User requested to exclude)
+# Case Study Source Documents
 Design_Doc.md
 *.pptx
 *.docx
@@ -9,8 +9,10 @@ __pycache__/
 *$py.class
 *.so
 
-# Caches and test environments
+# Caches, coverage, and virtual environments
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 .env
@@ -29,3 +31,12 @@ output/*.json
 build/
 dist/
 .eggs/
+
+# Temporary / OS / Editor files
+*.log
+*.tmp
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
