@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pmfa"
+version = "1.0.0"
+description = "Pegasus Mobile Forensic Agent - Autonomous triage & IoC detection kit for zero-click spyware"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+    { name = "PMFA Security Research Team" }
+]
+keywords = [
+    "forensics",
+    "mobile-security",
+    "pegasus",
+    "ioc",
+    "ed25519",
+    "sha256",
+    "aes-gcm",
+    "zero-click",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Information Technology",
+    "Topic :: Security :: Cryptography",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "cryptography>=41.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[project.scripts]
+pmfa = "pmfa.agent:main"
+pmfa-verify = "pmfa.feed_verifier:main"
+pmfa-scan = "pmfa.scanner:main"
+pmfa-match = "pmfa.matcher:main"
+pmfa-seal = "pmfa.sealer:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pmfa*"]

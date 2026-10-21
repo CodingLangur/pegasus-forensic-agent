@@ -12,7 +12,7 @@ from enum import Enum
 import logging
 from pathlib import Path
 import sys
-from typing import Optional
+from typing import Any, Callable, List, Optional
 
 from pmfa.feed_verifier import E_INTEGRITY_FAIL, IntegrityVerificationError, verify_and_load_feed
 from pmfa.matcher import IoCMatcher, display_terminal_summary
@@ -23,18 +23,20 @@ logger = logging.getLogger("pmfa.agent")
 
 
 class AgentState(Enum):
-    """Forensic agent state machine states (Design Doc Section 4)."""
+    """Forensic agent state machine states adhering to Design Doc Section 4."""
     INITIALIZING = "INITIALIZING"
     FEED_VERIFY = "FEED_VERIFY"
     SCANNING = "SCANNING"
     ANALYZING = "ANALYZING"
+    ALERT_GEN = "ALERT_GEN"
     SEALING = "SEALING"
     COMPLETE = "COMPLETE"
     ABORTED = "ABORTED"
+    HALT = "HALT"
 
 
 class PegasusForensicAgent:
-    """Autonomous mobile forensic analysis agent."""
+    """Autonomous mobile forensic analysis agent with state machine coordination."""
 
     def __init__(
         self,
@@ -47,6 +49,8 @@ class PegasusForensicAgent:
         workers: int = 4,
         analyst_pubkey_path: Optional[str] = None,
         passphrase: Optional[str] = None,
+        alert_callback: Optional[Callable[[Any], None]] = None,
+        alert_json_path: Optional[str] = None,
     ):
         self.target_path = Path(target_path)
         self.feed_path = Path(feed_path)
@@ -57,11 +61,16 @@ class PegasusForensicAgent:
         self.workers = workers
         self.analyst_pubkey_path = Path(analyst_pubkey_path) if analyst_pubkey_path else None
         self.passphrase = passphrase
+        self.alert_callback = alert_callback
+        self.alert_json_path = Path(alert_json_path) if alert_json_path else None
         self.state = AgentState.INITIALIZING
+        self.state_history: List[AgentState] = [self.state]
 
     def transition(self, next_state: AgentState) -> None:
-        """Executes state transition in agent lifecycle."""
+        """Executes state transition in agent lifecycle and records state history."""
+        logger.debug("[State Machine] Transition: %s -> %s", self.state.value, next_state.value)
         self.state = next_state
+        self.state_history.append(next_state)
 
     def run(self) -> int:
         """Executes autonomous forensic scanning and evidence packaging workflow."""
@@ -70,11 +79,11 @@ class PegasusForensicAgent:
         try:
             feed = verify_and_load_feed(self.feed_path, self.sig_path, self.pubkey_path)
         except IntegrityVerificationError:
-            self.transition(AgentState.ABORTED)
+            self.transition(AgentState.HALT)
             return E_INTEGRITY_FAIL
         except Exception as exc:
             sys.stderr.write(f"[-] Fatal error during feed verification: {exc}\n")
-            self.transition(AgentState.ABORTED)
+            self.transition(AgentState.HALT)
             return 1
 
         # 2. State: FEED_VERIFY -> SCANNING
@@ -83,7 +92,7 @@ class PegasusForensicAgent:
             scan_result = scan_directory(self.target_path, max_workers=self.workers)
         except Exception as exc:
             sys.stderr.write(f"[-] Scan traversal failed: {exc}\n")
-            self.transition(AgentState.ABORTED)
+            self.transition(AgentState.HALT)
             return 1
 
         # 3. State: SCANNING -> ANALYZING
@@ -91,7 +100,24 @@ class PegasusForensicAgent:
         matcher = IoCMatcher(feed)
         report = matcher.correlate_scan(scan_result)
 
-        # 4. State: ANALYZING -> SEALING
+        # 4. State Anomaly Branching: If anomalies detected, enter ALERT_GEN state before SEALING
+        if report.threat_detected:
+            self.transition(AgentState.ALERT_GEN)
+            logger.warning(
+                "[!] ALERT_GEN: %d anomaly match(es) detected. Generating forensic triage alert.",
+                len(report.findings),
+            )
+            if self.alert_json_path:
+                self.alert_json_path.parent.mkdir(parents=True, exist_ok=True)
+                self.alert_json_path.write_text(report.to_json(), encoding="utf-8")
+                print(f"[!] Pre-encryption alert exported : {self.alert_json_path}")
+            if self.alert_callback:
+                try:
+                    self.alert_callback(report)
+                except Exception as exc:
+                    logger.error("[-] Error executing alert_callback: %s", exc)
+
+        # 5. State: ANALYZING / ALERT_GEN -> SEALING
         self.transition(AgentState.SEALING)
         try:
             pkg = seal_report(
@@ -103,10 +129,10 @@ class PegasusForensicAgent:
             )
         except Exception as exc:
             sys.stderr.write(f"[-] Cryptographic sealing failed: {exc}\n")
-            self.transition(AgentState.ABORTED)
+            self.transition(AgentState.HALT)
             return 1
 
-        # 5. State: SEALING -> COMPLETE
+        # 6. State: SEALING -> COMPLETE
         self.transition(AgentState.COMPLETE)
 
         # Output execution metrics and summary
@@ -185,6 +211,11 @@ def main() -> int:
         "--passphrase",
         help="Passphrase to derive KEK and wrap or unwrap evidence key",
     )
+    parser.add_argument(
+        "--alert-json",
+        metavar="ALERT_FILE",
+        help="Path to export unencrypted alert findings JSON if threats are detected (ALERT_GEN state)",
+    )
 
     args = parser.parse_args()
 
@@ -219,6 +250,7 @@ def main() -> int:
         workers=args.workers,
         analyst_pubkey_path=args.analyst_pubkey,
         passphrase=args.passphrase,
+        alert_json_path=args.alert_json,
     )
     return agent.run()
 

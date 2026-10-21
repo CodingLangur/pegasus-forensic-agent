@@ -21,4 +21,11 @@ venv/
 # Ephemeral output artifacts (evidence and keys)
 output/*.enc
 output/*.key
+output/*.json
 !output/.gitkeep
+
+# Build and distribution artifacts
+*.egg-info/
+build/
+dist/
+.eggs/
