@@ -4,6 +4,7 @@ Agent Logic & IoC Matching Engine.
 
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import unittest
@@ -25,6 +26,10 @@ class TestIoCMatcherUnit(unittest.TestCase):
             suspicious_paths={"/private/var/tmp/com.apple.crashreporter.plist"},
             suspicious_filenames={"libagent_payload.dylib"},
             suspicious_domains={"c2-malicious-sink.org"},
+            suspicious_filename_patterns={"^payload_v[0-9]+\\.dylib$"},
+            suspicious_path_patterns={r".*/var/mobile/Containers/.*"},
+            compiled_filename_patterns=[("^payload_v[0-9]+\\.dylib$", re.compile(r"^payload_v[0-9]+\.dylib$", re.IGNORECASE))],
+            compiled_path_patterns=[(r".*/var/mobile/Containers/.*", re.compile(r".*/var/mobile/Containers/.*", re.IGNORECASE))],
         )
         self.matcher = IoCMatcher(self.mock_feed)
 
@@ -102,6 +107,46 @@ class TestIoCMatcherUnit(unittest.TestCase):
         self.assertIsNotNone(finding)
         self.assertEqual(finding.severity, "CRITICAL")
         self.assertEqual(finding.indicator_type, "SUSPICIOUS_PATH")
+
+    def test_vector2a_filename_regex_match(self):
+        artifact = ForensicArtifact(
+            absolute_path="/tmp/test/payload_v2.dylib",
+            relative_path="usr/lib/payload_v2.dylib",
+            file_size_bytes=2048,
+            sha256="ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            mtime=1700000000.0,
+            ctime=1700000000.0,
+            mtime_iso="2023-11-14T22:13:20+00:00",
+            ctime_iso="2023-11-14T22:13:20+00:00",
+            permissions_octal="0o644",
+            permissions_symbolic="-rw-r--r--",
+            file_type="binary",
+        )
+        finding = self.matcher.match_filename(artifact)
+        self.assertIsNotNone(finding)
+        self.assertEqual(finding.severity, "CRITICAL")
+        self.assertEqual(finding.indicator_type, "SUSPICIOUS_FILENAME")
+        self.assertIn("regex pattern", finding.details)
+
+    def test_vector2b_path_regex_match(self):
+        artifact = ForensicArtifact(
+            absolute_path="/backup/private/var/mobile/Containers/Data/Application/malicious.dylib",
+            relative_path="private/var/mobile/Containers/Data/Application/malicious.dylib",
+            file_size_bytes=1024,
+            sha256="dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            mtime=1700000000.0,
+            ctime=1700000000.0,
+            mtime_iso="2023-11-14T22:13:20+00:00",
+            ctime_iso="2023-11-14T22:13:20+00:00",
+            permissions_octal="0o644",
+            permissions_symbolic="-rw-r--r--",
+            file_type="binary",
+        )
+        finding = self.matcher.match_path(artifact)
+        self.assertIsNotNone(finding)
+        self.assertEqual(finding.severity, "CRITICAL")
+        self.assertEqual(finding.indicator_type, "SUSPICIOUS_PATH")
+        self.assertIn("regex pattern", finding.details)
 
 
 class TestIoCMatcherIntegration(unittest.TestCase):

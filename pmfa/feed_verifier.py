@@ -9,8 +9,9 @@ from dataclasses import dataclass, field
 import json
 import logging
 from pathlib import Path
+import re
 import sys
-from typing import Any, Dict, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from pmfa.crypto.signatures import (
     load_private_key,
@@ -52,6 +53,10 @@ class ThreatFeed:
     suspicious_paths: Set[str] = field(default_factory=set)
     suspicious_filenames: Set[str] = field(default_factory=set)
     suspicious_domains: Set[str] = field(default_factory=set)
+    suspicious_filename_patterns: Set[str] = field(default_factory=set)
+    suspicious_path_patterns: Set[str] = field(default_factory=set)
+    compiled_filename_patterns: List[Tuple[str, Any]] = field(default_factory=list, repr=False)
+    compiled_path_patterns: List[Tuple[str, Any]] = field(default_factory=list, repr=False)
     raw_payload: Dict[str, Any] = field(default_factory=dict, repr=False)
 
     def matches_hash(self, sha256_hash: str) -> bool:
@@ -70,6 +75,28 @@ class ThreatFeed:
     def matches_domain(self, domain: str) -> bool:
         """Checks if a given domain matches any verified suspicious domain."""
         return domain.strip().lower() in self.suspicious_domains
+
+    def match_filename_pattern(self, filename: str) -> Optional[str]:
+        """Evaluates filename against compiled regular expression patterns.
+
+        Returns matching regex pattern string if a match is found, otherwise None.
+        """
+        fn = filename.strip()
+        for pat_str, regex in self.compiled_filename_patterns:
+            if regex.search(fn):
+                return pat_str
+        return None
+
+    def match_path_pattern(self, path: str) -> Optional[str]:
+        """Evaluates normalized path against compiled regular expression patterns.
+
+        Returns matching regex pattern string if a match is found, otherwise None.
+        """
+        p = path.strip().replace("\\", "/")
+        for pat_str, regex in self.compiled_path_patterns:
+            if regex.search(p):
+                return pat_str
+        return None
 
 
 def validate_feed_schema(payload: Dict[str, Any]) -> ThreatFeed:
@@ -98,7 +125,44 @@ def validate_feed_schema(payload: Dict[str, Any]) -> ThreatFeed:
     normalized_paths = {p.strip() for p in payload["suspicious_paths"] if isinstance(p, str)}
     normalized_filenames = {fn.strip() for fn in payload["suspicious_filenames"] if isinstance(fn, str)}
     raw_domains = payload.get("suspicious_domains", [])
+    if not isinstance(raw_domains, list):
+        raise FeedSchemaError("'suspicious_domains' must be a list of domain strings")
     normalized_domains = {d.strip().lower() for d in raw_domains if isinstance(d, str)}
+
+    # Optional regex pattern lists
+    raw_fn_patterns = payload.get("suspicious_filename_patterns", [])
+    if not isinstance(raw_fn_patterns, list):
+        raise FeedSchemaError("'suspicious_filename_patterns' must be a list of regex pattern strings")
+    normalized_fn_patterns = {p.strip() for p in raw_fn_patterns if isinstance(p, str)}
+
+    raw_path_patterns = payload.get("suspicious_path_patterns", [])
+    if not isinstance(raw_path_patterns, list):
+        raise FeedSchemaError("'suspicious_path_patterns' must be a list of regex pattern strings")
+    normalized_path_patterns = {p.strip() for p in raw_path_patterns if isinstance(p, str)}
+
+    # Auto-index patterns with regex special characters found in filenames/paths
+    regex_special_chars = set(r"*+?^$[](){}|")
+    for fn in normalized_filenames:
+        if any(c in fn for c in regex_special_chars):
+            normalized_fn_patterns.add(fn)
+
+    for sp in normalized_paths:
+        if any(c in sp for c in regex_special_chars):
+            normalized_path_patterns.add(sp)
+
+    compiled_fn_patterns: List[Tuple[str, Any]] = []
+    for pat in sorted(normalized_fn_patterns):
+        try:
+            compiled_fn_patterns.append((pat, re.compile(pat, re.IGNORECASE)))
+        except re.error as exc:
+            raise FeedSchemaError(f"Invalid regex pattern in suspicious_filename_patterns ('{pat}'): {exc}") from exc
+
+    compiled_path_patterns: List[Tuple[str, Any]] = []
+    for pat in sorted(normalized_path_patterns):
+        try:
+            compiled_path_patterns.append((pat, re.compile(pat, re.IGNORECASE)))
+        except re.error as exc:
+            raise FeedSchemaError(f"Invalid regex pattern in suspicious_path_patterns ('{pat}'): {exc}") from exc
 
     return ThreatFeed(
         version=str(payload["version"]),
@@ -108,6 +172,10 @@ def validate_feed_schema(payload: Dict[str, Any]) -> ThreatFeed:
         suspicious_paths=normalized_paths,
         suspicious_filenames=normalized_filenames,
         suspicious_domains=normalized_domains,
+        suspicious_filename_patterns=normalized_fn_patterns,
+        suspicious_path_patterns=normalized_path_patterns,
+        compiled_filename_patterns=compiled_fn_patterns,
+        compiled_path_patterns=compiled_path_patterns,
         raw_payload=payload,
     )
 

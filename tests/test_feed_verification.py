@@ -139,6 +139,39 @@ class TestThreatFeedIngestion(unittest.TestCase):
             feed = verify_and_load_feed(custom_feed, generated_sig, self.pubkey_path)
             self.assertEqual(feed.threat_actor, "NSO Group / Pegasus")
 
+    def test_feed_schema_with_regex_patterns(self):
+        valid_payload = {
+            "version": "1.0.0",
+            "threat_actor": "NSO Group / Pegasus",
+            "last_updated": "2026-10-19T00:00:00Z",
+            "hashes_sha256": ["a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e"],
+            "suspicious_paths": ["/private/var/tmp/stage1.plist"],
+            "suspicious_filenames": ["libpayload.dylib"],
+            "suspicious_filename_patterns": ["^libagent_.*\\.dylib$"],
+            "suspicious_path_patterns": [".*/Preferences/com\\.nso\\..*"],
+        }
+        feed = validate_feed_schema(valid_payload)
+        self.assertIn("^libagent_.*\\.dylib$", feed.suspicious_filename_patterns)
+        self.assertEqual(feed.match_filename_pattern("libagent_v2.dylib"), "^libagent_.*\\.dylib$")
+        self.assertIsNone(feed.match_filename_pattern("clean_lib.dylib"))
+        self.assertEqual(
+            feed.match_path_pattern("/Library/Preferences/com.nso.stage2.plist"),
+            ".*/Preferences/com\\.nso\\..*",
+        )
+
+    def test_feed_schema_invalid_regex_raises_error(self):
+        bad_payload = {
+            "version": "1.0.0",
+            "threat_actor": "NSO Group / Pegasus",
+            "last_updated": "2026-10-19T00:00:00Z",
+            "hashes_sha256": ["a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e"],
+            "suspicious_paths": [],
+            "suspicious_filenames": [],
+            "suspicious_filename_patterns": ["[invalid_unclosed_regex("],
+        }
+        with self.assertRaises(FeedSchemaError):
+            validate_feed_schema(bad_payload)
+
 
 class TestCLIIntegrity(unittest.TestCase):
     """Tests CLI entrypoint and exit codes for automated integration."""

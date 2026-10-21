@@ -17,5 +17,13 @@
   "suspicious_domains": [
     "cloud-services-sync.net",
     "apple-telemetry-server.com"
+  ],
+  "suspicious_filename_patterns": [
+    "^libagent_.*\\.dylib$",
+    ".*\\.ext$"
+  ],
+  "suspicious_path_patterns": [
+    ".*/private/var/tmp/.*crashreporter.*",
+    ".*/Library/Preferences/com\\.nso\\..*"
   ]
 }

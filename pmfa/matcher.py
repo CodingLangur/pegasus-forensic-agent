@@ -21,6 +21,11 @@ from typing import Any, Dict, List, Optional, Union
 import uuid
 
 from pmfa.feed_verifier import ThreatFeed, verify_and_load_feed
+from pmfa.parsers import (
+    inspect_plist_file,
+    inspect_sqlite_database,
+    scan_raw_bytes_for_domains,
+)
 from pmfa.scanner import ForensicArtifact, ScanResult, scan_directory
 
 logger = logging.getLogger("pmfa.matcher")
@@ -128,6 +133,19 @@ class IoCMatcher:
                 details=f"Known malicious binary or injected extension filename detected: {file_name}",
                 remediation="Preserve disk image for chain of custody. Investigate parent launch daemons.",
             )
+
+        # Regex pattern matching
+        matched_pat = self.feed.match_filename_pattern(file_name)
+        if matched_pat:
+            return Finding(
+                severity="CRITICAL",
+                indicator_type="SUSPICIOUS_FILENAME",
+                matched_value=file_name,
+                file_path=artifact.relative_path,
+                file_size_bytes=artifact.file_size_bytes,
+                details=f"Injected extension or malicious binary matched regex pattern '{matched_pat}': {file_name}",
+                remediation="Preserve disk image for chain of custody. Investigate parent launch daemons.",
+            )
         return None
 
     def match_path(self, artifact: ForensicArtifact) -> Optional[Finding]:
@@ -148,21 +166,33 @@ class IoCMatcher:
                     details=f"Anomalous persistence path or temporary injection directory identified: {sp}",
                     remediation="Inspect persistence hooks (LaunchDaemons, LaunchAgents) and crash logs.",
                 )
+
+        # Regex pattern matching for paths
+        matched_pat = self.feed.match_path_pattern(rel_norm) or self.feed.match_path_pattern(abs_norm)
+        if matched_pat:
+            return Finding(
+                severity="CRITICAL",
+                indicator_type="SUSPICIOUS_PATH",
+                matched_value=matched_pat,
+                file_path=artifact.relative_path,
+                file_size_bytes=artifact.file_size_bytes,
+                details=f"Anomalous persistence path or temporary injection directory matched regex pattern '{matched_pat}': {rel_norm}",
+                remediation="Inspect persistence hooks (LaunchDaemons, LaunchAgents) and crash logs.",
+            )
         return None
 
     def match_network_domains(self, artifact: ForensicArtifact) -> List[Finding]:
-        """Vector 3: Search SQLite network cache, Safari/WhatsApp plists, or configs for C2 domains."""
+        """Vector 3: Deep inspection of SQLite caches, Safari/WhatsApp plists, and binaries for C2 domains."""
         if not self.feed.suspicious_domains:
             return []
 
         # Target candidate files likely to hold network artifacts
         inspectable_types = {"database", "plist", "log", "data"}
         if artifact.file_type not in inspectable_types and not any(
-            artifact.relative_path.endswith(ext) for ext in [".db", ".sqlite", ".plist", ".log", ".txt"]
+            artifact.relative_path.endswith(ext) for ext in [".db", ".sqlite", ".sqlite3", ".plist", ".log", ".txt"]
         ):
             return []
 
-        # Read artifact binary content to find domain strings and record byte offset
         file_path = Path(artifact.absolute_path)
         if not file_path.is_file():
             return []
@@ -173,10 +203,56 @@ class IoCMatcher:
             return []
 
         findings: List[Finding] = []
-        for domain in self.feed.suspicious_domains:
-            domain_bytes = domain.encode("utf-8")
-            offset = content.find(domain_bytes)
-            if offset != -1:
+        seen_domains: Set[str] = set()
+
+        # 1. Deep SQLite Inspection
+        if artifact.file_type == "database" or any(artifact.relative_path.endswith(ext) for ext in [".db", ".sqlite", ".sqlite3"]):
+            sqlite_matches = inspect_sqlite_database(file_path, self.feed.suspicious_domains)
+            for sm in sqlite_matches:
+                offset = content.find(sm.matched_value.encode("utf-8"))
+                findings.append(
+                    Finding(
+                        severity=sm.severity,
+                        indicator_type=sm.indicator_type,
+                        matched_value=sm.matched_value,
+                        file_path=artifact.relative_path,
+                        file_size_bytes=artifact.file_size_bytes,
+                        details=sm.details,
+                        remediation="Block domain at perimeter DNS/firewall sinks. Review network flow logs for beaconing.",
+                        byte_offset=offset if offset != -1 else None,
+                    )
+                )
+                seen_domains.add(sm.matched_value)
+
+        # 2. Deep Plist Inspection
+        if artifact.file_type == "plist" or artifact.relative_path.endswith(".plist"):
+            plist_matches = inspect_plist_file(
+                file_path,
+                suspicious_domains=self.feed.suspicious_domains,
+                suspicious_filenames=self.feed.suspicious_filenames,
+                suspicious_paths=self.feed.suspicious_paths,
+            )
+            for pm in plist_matches:
+                if pm.indicator_type == "NETWORK_DOMAIN":
+                    offset = content.find(pm.matched_value.encode("utf-8"))
+                    findings.append(
+                        Finding(
+                            severity=pm.severity,
+                            indicator_type=pm.indicator_type,
+                            matched_value=pm.matched_value,
+                            file_path=artifact.relative_path,
+                            file_size_bytes=artifact.file_size_bytes,
+                            details=pm.details,
+                            remediation="Block domain at perimeter DNS/firewall sinks. Review network flow logs for beaconing.",
+                            byte_offset=offset if offset != -1 else None,
+                        )
+                    )
+                    seen_domains.add(pm.matched_value)
+
+        # 3. Raw Byte Scanning Fallback (for unparsed databases, plists, logs, binaries)
+        raw_matches = scan_raw_bytes_for_domains(content, self.feed.suspicious_domains)
+        for domain, offset in raw_matches:
+            if domain not in seen_domains:
                 findings.append(
                     Finding(
                         severity="HIGH",
@@ -189,6 +265,7 @@ class IoCMatcher:
                         byte_offset=offset,
                     )
                 )
+                seen_domains.add(domain)
 
         return findings
 
